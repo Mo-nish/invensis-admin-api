@@ -1,64 +1,68 @@
 const jwt = require('jsonwebtoken');
 const Admin = require('../models/Admin');
 
-// Admin authentication middleware
+const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'admin-super-secret-jwt-key';
+
+// Middleware to verify admin token
 const adminAuth = async (req, res, next) => {
   try {
-    // Get token from header or cookie
     const token = req.header('Authorization')?.replace('Bearer ', '') || 
                   req.cookies?.admin_token;
 
     if (!token) {
-      return res.status(401).json({ message: 'Access denied. No token provided.' });
+      return res.status(401).json({ 
+        message: 'Access denied. No admin token provided.',
+        redirectTo: '/admin/login'
+      });
     }
 
-    // Verify token
-    const decoded = jwt.verify(token, process.env.ADMIN_JWT_SECRET || 'admin-secret-key');
+    const decoded = jwt.verify(token, JWT_SECRET);
     
     // Check if admin exists and is active
     const admin = await Admin.findById(decoded.adminId);
-    if (!admin || !admin.isActive) {
-      return res.status(401).json({ message: 'Invalid token or admin not found.' });
+    if (!admin || !admin.isActive || admin.role !== 'admin') {
+      return res.status(401).json({ 
+        message: 'Invalid admin token.',
+        redirectTo: '/admin/login'
+      });
     }
 
-    // Add admin info to request
-    req.adminId = admin._id;
     req.admin = admin;
     next();
-
   } catch (error) {
-    console.error('Admin auth error:', error);
-    res.status(401).json({ message: 'Invalid token.' });
+    console.error('Admin Auth Error:', error);
+    return res.status(401).json({ 
+      message: 'Invalid admin token.',
+      redirectTo: '/admin/login'
+    });
   }
 };
 
 // Generate admin JWT token
-const generateAdminToken = (admin) => {
+const generateAdminToken = (adminId) => {
   return jwt.sign(
-    { adminId: admin._id, email: admin.email, role: 'admin' },
-    process.env.ADMIN_JWT_SECRET || 'admin-secret-key',
+    { adminId, type: 'admin' },
+    JWT_SECRET,
     { expiresIn: '24h' }
   );
 };
 
-// Verify role assignment (helper function)
+// Verify role assignment (for user registration)
 const verifyRoleAssignment = async (email, role) => {
-  try {
-    const RoleAssignment = require('../models/RoleAssignment');
-    const assignment = await RoleAssignment.findOne({ 
-      email: email.toLowerCase(), 
-      role,
-      isActive: true 
-    });
-    return assignment;
-  } catch (error) {
-    console.error('Role assignment verification error:', error);
-    return null;
-  }
+  const RoleAssignment = require('../models/RoleAssignment');
+  
+  const assignment = await RoleAssignment.findOne({ 
+    email: email.toLowerCase(), 
+    role,
+    isActive: true 
+  });
+  
+  return assignment;
 };
 
 module.exports = {
   adminAuth,
   generateAdminToken,
-  verifyRoleAssignment
+  verifyRoleAssignment,
+  JWT_SECRET
 }; 

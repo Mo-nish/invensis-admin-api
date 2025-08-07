@@ -2,13 +2,6 @@ const nodemailer = require('nodemailer');
 
 // Create transporter
 const createTransporter = () => {
-  console.log('🔍 Email Service Debug:');
-  console.log('EMAIL_USER:', process.env.EMAIL_USER ? 'SET' : 'NOT SET');
-  console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? 'SET' : 'NOT SET');
-  
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    throw new Error('Email credentials not configured');
-  }
   return nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -18,113 +11,85 @@ const createTransporter = () => {
   });
 };
 
-// Generate invitation token
-const generateInvitationToken = (email, role) => {
-  const jwt = require('jsonwebtoken');
-  return jwt.sign(
-    { 
-      email: email.toLowerCase(), 
-      role, 
-      type: 'invitation' 
-    },
-    process.env.ADMIN_JWT_SECRET || 'admin-secret-key',
-    { expiresIn: '24h' }
-  );
-};
-
-// Get registration URL based on environment
-const getRegistrationUrl = (token) => {
-  const baseUrl = process.env.NODE_ENV === 'production' 
-    ? 'https://hiring.invensis.com' 
-    : 'http://localhost:5001';
-  return `${baseUrl}/register?token=${token}`;
-};
-
-// Send role assignment email
-const sendRoleAssignmentEmail = async (email, role) => {
+// Send role assignment notification
+const sendRoleAssignmentEmail = async (email, role, adminName) => {
   try {
     const transporter = createTransporter();
     
-    const token = generateInvitationToken(email, role);
-    const registrationLink = getRegistrationUrl(token);
+    const registrationLink = `http://localhost:3000/register?email=${encodeURIComponent(email)}&role=${encodeURIComponent(role)}`;
     
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
-      subject: 'Invensis Hiring Portal Access Invitation',
+      subject: `You have been designated as ${role}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #1976d2;">Invensis Hiring Portal Access Invitation</h2>
-          <p>Hello,</p>
-          <p>You have been added to Invensis Hiring Portal as a <strong>${role}</strong>.</p>
-          <p>Click the link below to complete your registration and set your password:</p>
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${registrationLink}" 
-               style="background-color: #1976d2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">
-              Complete Registration
-            </a>
+          <h2 style="color: #1976d2;">Role Assignment Notification</h2>
+          <p>Hi,</p>
+          <p>You have been designated as <strong>${role}</strong> in our Invensis Hiring Portal.</p>
+          <p>Please register using your Gmail address to access your dashboard.</p>
+          
+          <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <h3 style="margin-top: 0;">Registration Details:</h3>
+            <p><strong>Email:</strong> ${email}</p>
+            <p><strong>Role:</strong> ${role}</p>
+            <p><strong>Registration Link:</strong> <a href="${registrationLink}" style="color: #1976d2;">Click here to register</a></p>
           </div>
-          <p><strong>Registration Link:</strong> <a href="${registrationLink}">${registrationLink}</a></p>
-          <p><strong>Important Notes:</strong></p>
-          <ul>
-            <li>Use the same email address (${email}) for registration</li>
-            <li>Password must be at least 8 characters with letters and numbers</li>
-            <li>Your role (${role}) will be automatically assigned</li>
-            <li>This invitation expires in 24 hours</li>
-          </ul>
+          
+          <p>Please use the same Gmail address (${email}) during registration.</p>
           <p>If you have any questions, please contact the admin team.</p>
-          <br>
-          <p>Best regards,<br>Invensis Hiring Portal Team</p>
+          
+          <p>Regards,<br>${adminName}<br>Admin Team</p>
         </div>
       `
     };
 
     const result = await transporter.sendMail(mailOptions);
-    console.log(`✅ Role assignment email sent to ${email}`);
+    console.log('✅ Role assignment email sent:', result.messageId);
     return { success: true, messageId: result.messageId };
   } catch (error) {
-    console.error('❌ Email sending failed:', error);
-    throw error;
+    console.error('❌ Role assignment email failed:', error);
+    return { success: false, error: error.message };
   }
 };
 
 // Send admin registration confirmation
-const sendAdminRegistrationEmail = async (email, name) => {
+const sendAdminRegistrationEmail = async (email, adminName) => {
   try {
     const transporter = createTransporter();
-    
-    const adminUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://admin.invensis.com' 
-      : 'http://localhost:3002';
     
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
-      subject: 'Admin Registration Confirmation',
+      subject: 'Admin Portal Access Confirmed',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #1976d2;">Admin Registration Successful</h2>
-          <p>Hello ${name},</p>
-          <p>Your admin account has been created successfully in the Invensis Hiring Portal.</p>
-          <p>You can now:</p>
-          <ul>
-            <li>Manage user roles</li>
-            <li>Send role assignment invitations</li>
-            <li>View system analytics and statistics</li>
-            <li>Monitor user registrations and activity</li>
-          </ul>
-          <p>Access your admin dashboard at: <a href="${adminUrl}">${adminUrl}</a></p>
-          <p>Best regards,<br>Invensis Hiring Portal Team</p>
+          <h2 style="color: #1976d2;">Admin Portal Access</h2>
+          <p>Hi ${adminName},</p>
+          <p>Your admin portal access has been successfully created.</p>
+          <p>You can now log in to the admin portal at: <a href="http://localhost:3002" style="color: #1976d2;">http://localhost:3002</a></p>
+          
+          <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <h3 style="margin-top: 0;">Admin Portal Features:</h3>
+            <ul>
+              <li>Manage HR user roles</li>
+              <li>Manage Manager user roles</li>
+              <li>Manage Board Member user roles</li>
+              <li>View system analytics</li>
+            </ul>
+          </div>
+          
+          <p>Regards,<br>System Admin</p>
         </div>
       `
     };
 
-    await transporter.sendMail(mailOptions);
-    console.log(`✅ Admin registration email sent to ${email}`);
-    return { success: true };
+    const result = await transporter.sendMail(mailOptions);
+    console.log('✅ Admin registration email sent:', result.messageId);
+    return { success: true, messageId: result.messageId };
   } catch (error) {
     console.error('❌ Admin registration email failed:', error);
-    throw error;
+    return { success: false, error: error.message };
   }
 };
 
@@ -144,7 +109,5 @@ const verifyEmailConfig = async () => {
 module.exports = {
   sendRoleAssignmentEmail,
   sendAdminRegistrationEmail,
-  verifyEmailConfig,
-  generateInvitationToken,
-  getRegistrationUrl
+  verifyEmailConfig
 }; 

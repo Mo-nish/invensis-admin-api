@@ -1,7 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const RoleAssignment = require('../models/RoleAssignment');
-const Admin = require('../models/Admin');
 const { adminAuth } = require('../middleware/auth');
 const { sendRoleAssignmentEmail } = require('../utils/emailService');
 
@@ -12,44 +11,26 @@ router.get('/', adminAuth, async (req, res) => {
   try {
     const assignments = await RoleAssignment.find()
       .populate('invitedBy', 'name email')
-      .sort({ createdAt: -1 });
-    
-    res.json(assignments);
+      .sort({ invitedAt: -1 });
+
+    // Group by role
+    const groupedAssignments = {
+      'HR': assignments.filter(a => a.role === 'HR'),
+      'Manager': assignments.filter(a => a.role === 'Manager'),
+      'Board Member': assignments.filter(a => a.role === 'Board Member')
+    };
+
+    res.json({ assignments: groupedAssignments });
   } catch (error) {
-    console.error('Error fetching role assignments:', error);
-    res.status(500).json({ message: 'Failed to fetch role assignments' });
+    console.error('Get role assignments error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Get role limits
-router.get('/limits', adminAuth, async (req, res) => {
-  try {
-    const limits = RoleAssignment.getRoleLimits();
-    const currentCounts = {};
-    
-    // Get current counts for each role
-    for (const role of Object.keys(limits)) {
-      const count = await RoleAssignment.countDocuments({ 
-        role, 
-        isActive: true 
-      });
-      currentCounts[role] = count;
-    }
-    
-    res.json({
-      limits,
-      currentCounts
-    });
-  } catch (error) {
-    console.error('Error fetching role limits:', error);
-    res.status(500).json({ message: 'Failed to fetch role limits' });
-  }
-});
-
-// Create new role assignment
+// Add role assignment
 router.post('/', adminAuth, [
   body('email').isEmail().normalizeEmail().withMessage('Please provide a valid email'),
-  body('role').isIn(['HR', 'Manager', 'Board Member']).withMessage('Role must be HR, Manager, or Board Member')
+  body('role').isIn(['HR', 'Manager', 'Board Member']).withMessage('Invalid role')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -60,69 +41,48 @@ router.post('/', adminAuth, [
     const { email, role } = req.body;
 
     // Check if assignment already exists
-    const existingAssignment = await RoleAssignment.findOne({ 
-      email: email.toLowerCase(), 
-      role 
-    });
-
+    const existingAssignment = await RoleAssignment.findOne({ email });
     if (existingAssignment) {
       return res.status(400).json({ 
-        message: `User ${email} is already assigned to ${role} role` 
+        message: `Email ${email} is already assigned to role: ${existingAssignment.role}` 
       });
     }
-
-    // Check role limits
-    console.log(`🔍 Checking role limit for ${role}...`);
-    const limitCheck = await RoleAssignment.checkRoleLimit(role);
-    console.log(`📊 Role limit check result:`, limitCheck);
-    
-    if (!limitCheck.canAdd) {
-      console.log(`❌ Role limit reached for ${role}. Current: ${limitCheck.currentCount}/${limitCheck.limit}`);
-      return res.status(400).json({ 
-        message: `Role limit reached for ${role}. Current: ${limitCheck.currentCount}/${limitCheck.limit}` 
-      });
-    }
-    
-    console.log(`✅ Role limit check passed for ${role}`);
 
     // Create new role assignment
     const assignment = new RoleAssignment({
       email: email.toLowerCase(),
       role,
-      invitedBy: req.adminId
+      invitedBy: req.admin._id,
+      status: 'pending'
     });
 
     await assignment.save();
 
-    // Send invitation email
-    let emailSent = false;
-    let emailMessage = '';
-    
-    try {
-      await sendRoleAssignmentEmail(email, role);
-      emailSent = true;
-    } catch (emailError) {
-      console.error('❌ Role assignment email failed:', emailError);
-      emailMessage = emailError.message;
-    }
+    // Send email notification
+    const emailResult = await sendRoleAssignmentEmail(email, role, req.admin.name);
 
     res.status(201).json({
       message: 'Role assignment created successfully',
-      assignment,
-      emailSent,
-      emailMessage
+      assignment: {
+        id: assignment._id,
+        email: assignment.email,
+        role: assignment.role,
+        status: assignment.status,
+        invitedAt: assignment.invitedAt
+      },
+      emailSent: emailResult.success,
+      emailMessage: emailResult.success ? 'Email notification sent' : emailResult.error
     });
-
   } catch (error) {
-    console.error('Error creating role assignment:', error);
-    res.status(500).json({ message: 'Failed to create role assignment' });
+    console.error('Create role assignment error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
 // Update role assignment
 router.put('/:id', adminAuth, [
-  body('status').optional().isIn(['pending', 'active', 'inactive']),
-  body('isActive').optional().isBoolean()
+  body('status').optional().isIn(['pending', 'active', 'inactive']).withMessage('Invalid status'),
+  body('isActive').optional().isBoolean().withMessage('isActive must be boolean')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -130,41 +90,79 @@ router.put('/:id', adminAuth, [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { id } = req.params;
-    const updateData = req.body;
-
-    const assignment = await RoleAssignment.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true }
-    );
-
+    const assignment = await RoleAssignment.findById(req.params.id);
     if (!assignment) {
       return res.status(404).json({ message: 'Role assignment not found' });
     }
 
-    res.json(assignment);
+    // Update fields
+    if (req.body.status) assignment.status = req.body.status;
+    if (req.body.isActive !== undefined) assignment.isActive = req.body.isActive;
+
+    await assignment.save();
+
+    res.json({
+      message: 'Role assignment updated successfully',
+      assignment: {
+        id: assignment._id,
+        email: assignment.email,
+        role: assignment.role,
+        status: assignment.status,
+        isActive: assignment.isActive
+      }
+    });
   } catch (error) {
-    console.error('Error updating role assignment:', error);
-    res.status(500).json({ message: 'Failed to update role assignment' });
+    console.error('Update role assignment error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
 // Delete role assignment
 router.delete('/:id', adminAuth, async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    const assignment = await RoleAssignment.findByIdAndDelete(id);
-    
+    const assignment = await RoleAssignment.findById(req.params.id);
     if (!assignment) {
       return res.status(404).json({ message: 'Role assignment not found' });
     }
 
+    await assignment.deleteOne();
+
     res.json({ message: 'Role assignment deleted successfully' });
   } catch (error) {
-    console.error('Error deleting role assignment:', error);
-    res.status(500).json({ message: 'Failed to delete role assignment' });
+    console.error('Delete role assignment error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get role statistics
+router.get('/stats', adminAuth, async (req, res) => {
+  try {
+    const stats = await RoleAssignment.aggregate([
+      {
+        $group: {
+          _id: '$role',
+          total: { $sum: 1 },
+          active: { $sum: { $cond: ['$isActive', 1, 0] } },
+          pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+          registered: { $sum: { $cond: ['$registeredAt', 1, 0] } }
+        }
+      }
+    ]);
+
+    const formattedStats = {};
+    stats.forEach(stat => {
+      formattedStats[stat._id] = {
+        total: stat.total,
+        active: stat.active,
+        pending: stat.pending,
+        registered: stat.registered
+      };
+    });
+
+    res.json({ stats: formattedStats });
+  } catch (error) {
+    console.error('Get role stats error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

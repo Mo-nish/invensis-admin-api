@@ -2,26 +2,26 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const adminSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
-    trim: true
-  },
   email: {
     type: String,
     required: true,
     unique: true,
-    lowercase: true,
-    trim: true
+    trim: true,
+    lowercase: true
   },
   password: {
     type: String,
     required: true
   },
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
   role: {
     type: String,
-    default: 'admin',
-    enum: ['admin']
+    enum: ['admin'],
+    default: 'admin'
   },
   isActive: {
     type: Boolean,
@@ -35,8 +35,6 @@ const adminSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
-}, {
-  timestamps: true
 });
 
 // Hash password before saving
